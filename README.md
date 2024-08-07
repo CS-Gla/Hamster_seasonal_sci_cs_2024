@@ -12,7 +12,7 @@ NanoFLow1.sh: Basecall fast5 files to produce fastq files, trim and filter fastq
 NanoFLow2.sh: Utilise minimap2 to align fastq files to a reference genome producing bam files, build expression matrix of sequencing using salmon <br>
 NanoFlow_Report.Rmd: Utilises EdgeR to filter for lowly expressed transcripts, and identify differentially expressed transcripts. <br>
 
-glmm.r: builds a gneral linear modle of Siberian hamster CRISPR data
+glmm.r: Used to build a gneral linear modle of Siberian hamster CRISPR data.
 
 
 Requirements;
