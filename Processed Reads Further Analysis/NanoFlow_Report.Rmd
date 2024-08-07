@@ -1,0 +1,373 @@
+---
+title: "NanoFlow: cDNA Transcriptome Report"
+date: 'Report created: `r Sys.Date()`'
+#bibliography: Static/Bibliography.bib
+output:
+  html_document:
+    css: Static/UoG.css
+    df_print: paged
+    highlight: null
+    keep_md: yes
+    number_sections: yes
+    self_contained: yes
+    theme: default
+    toc: yes
+    toc_depth: 2
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+    toc_depth: '2'
+link-citations: yes
+always_allow_html: yes
+---
+
+<div style="position:absolute;top:0px;right:0px;width:35%;">
+```{r, echo=FALSE}
+knitr::include_graphics("Static/Images/UoG.png")
+```
+</div>
+n
+BiocManager::install("ShortRead")
+```{r Imports, echo=FALSE, results='hide', warning=FALSE, message=FALSE}
+library(grid)
+library(gridExtra)
+library(pcaMethods)
+library(yaml)
+library(DRIMSeq)
+library(AnnotationDbi)
+library(GenomicFeatures)
+library(dplyr)
+library(edgeR)
+library(DEXSeq)
+library(DESeq2)
+library(devtools)
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+#library(session)     
+library(writexl)
+library(digest)
+library(kableExtra)
+library(stageR)
+library(ShortRead)  # Oh, the irony!
+
+config <- yaml.load_file("config.yaml")
+
+sig_level <- config$adjPValueThreshold
+gffFile <- file.path("ReferenceData", config$annotation)   
+# Format set as gtf as auto wasn't working. See line 152 to change.
+
+resultDir <- file.path("Analysis", "Results")
+dir.create(resultDir, showWarnings = FALSE, recursive=TRUE)
+persistenceData <- file.path(resultDir, "NanoFlow_Report.Rdata")
+
+```
+
+# Study design
+
+The **`NanoFlow_Report_NoIso.Rmd`** script has been used to generate this report. The supplied **`config.yaml`** configuration file defines the biological samples used in this DGE and DTU analysis.
+
+```{r setupParameters, echo=FALSE}
+studyDesign <- data.frame()
+for (i in 1:length(config$Samples)) {
+  studyDesign <- rbind(studyDesign, 
+                       data.frame(samples=names(config$Samples[[i]][[1]]), 
+                                  filename=unlist(config$Samples[[i]][[1]]), 
+                                  group=names(config$Samples[[i]])))
+}
+
+studyDesign$replicate <- sapply(1:nrow(studyDesign), function(x)sum(studyDesign$group[1:x]==studyDesign$group[x]))
+# reorder for stated reference group
+studyDesign$group <- relevel(as.factor(studyDesign$group), ref=config$referenceGroup)
+# quick tidy
+studyDesign <- studyDesign[,-which(colnames(studyDesign)=="samples")]
+
+knitr::kable(studyDesign, booktabs=TRUE, table.envir='table*', linesep="")  %>%
+  kable_styling(latex_options=c("hold_position", "scale_down"))
+
+```
+
+*Table showing the cDNA sequence files evaluated for DGE and DTU analysis.*
+
+```{r, echo=FALSE}
+# retain file name prefix
+samples <- gsub("\\..+", "", basename(as.character(studyDesign$filename)))
+# this code block to replace the col_data export and import
+coldata <- data.frame(cbind(NULL, sample_id=rownames(studyDesign), group=as.character(studyDesign$group), type="single-read"), stringsAsFactors=TRUE)
+
+
+```
+
+# Analysis file output
+
+The **`Salmon`** tool (@Salmon2017) has been used to assign cDNA read counts to the annotated transcripts.
+
+```{r importSalmonCounts, results='hide', echo=FALSE}
+salmonCountFiles <- paste(file.path("Analysis","Salmon",samples,"quant.sf"))
+
+rawSalmonCounts <- data.frame(Reference=character(), stringsAsFactors = FALSE)
+harvestSalmonCounts <- function(file) {
+  obs <- read.table(file, header=TRUE, stringsAsFactors = FALSE)
+  rawSalmonCounts <<- full_join(rawSalmonCounts, obs[which(obs$NumReads>0), c("Name", "NumReads")], by=c("Reference"="Name"))
+  file
+}
+lapply(salmonCountFiles, harvestSalmonCounts)
+colnames(rawSalmonCounts) <- append("Reference", samples)
+
+rownames(rawSalmonCounts) <- gsub("\\.+", "", as.character(rawSalmonCounts$Reference))            
+#taken out second . in gsub conditions
+```
+
+```{r geneCounts, echo=FALSE, warning=FALSE}
+# adjust column names for the presented table and excel file
+vRawSalmonCounts <- rawSalmonCounts[order(rowSums(rawSalmonCounts[, seq(2, ncol(rawSalmonCounts))]), decreasing=TRUE),]
+newnames <- rownames(studyDesign)[match(colnames(vRawSalmonCounts)[which(colnames(vRawSalmonCounts) %in% samples)], samples)]
+colnames(vRawSalmonCounts)[which(colnames(vRawSalmonCounts) %in% samples)] <- newnames
+
+csvExpressedTranscripts <- file.path(resultDir, "ExpressedTranscripts.csv")
+write.csv(vRawSalmonCounts, file = csvExpressedTranscripts)
+```
+
+The complete transcript mapping data is provided as a CSV format file at
+
+~~~
+`r csvExpressedTranscripts`
+~~~
+
+```{r loadAnnotations, echo=FALSE, results='hide', warning=FALSE, message=FALSE}
+# load the database annotation from provided GFF file
+txdb <- makeTxDbFromGFF(file=gffFile, format=c("gff"))
+txdf <- AnnotationDbi::select(txdb, keys(txdb,"GENEID"), "TXNAME", "GENEID")
+tab <- table(txdf$GENEID)
+txdf$ntx<- tab[match(txdf$GENEID, names(tab))]
+
+### ONLY FOR THIS MOUSE REFERENCE ###
+vRawSalmonCounts$Reference <- sub(".*?-","",vRawSalmonCounts$Reference)
+rownames(vRawSalmonCounts) <- sub(".*?-","",rownames(vRawSalmonCounts))
+
+# FIXME: filter for transcripts which are in the annotation. Why they are not all there? 
+filteredSalmonCounts <- vRawSalmonCounts[which(vRawSalmonCounts$Reference %in% txdf$TXNAME),]
+
+# Create counts data frame:
+salmonCounts<-data.frame(txdf[match(filteredSalmonCounts$Reference, txdf$TXNAME), c(1,2)], filteredSalmonCounts)
+
+salmonCounts[is.na(salmonCounts)] <- 0
+colnames(salmonCounts) <- append(c("gene_id", "feature_id"),colnames(filteredSalmonCounts))
+
+# adjust column names for the presented table and excel file
+vSalmonCounts <- salmonCounts[order(rowSums(salmonCounts[, seq(4, ncol(salmonCounts))]), decreasing=TRUE),]
+newnames <- rownames(studyDesign)[match(colnames(vSalmonCounts)[which(colnames(vSalmonCounts) %in% samples)], samples)]
+colnames(vSalmonCounts)[which(colnames(vSalmonCounts) %in% samples)] <- newnames
+
+csvExpressedGenesTranscripts <- file.path("Analysis","Results","ExpressedGenesTranscripts.csv")
+write.csv(vSalmonCounts, file = "Analysis/Results/ExpressedGenesTranscripts.csv")
+
+```
+
+The complete transcript mapping counts and parental gene assignments is provided as a CSV format file at 
+
+~~~
+`r csvExpressedGenesTranscripts`
+~~~
+
+**`r round(as.numeric((table(table(salmonCounts$gene_id)) / length(table(salmonCounts$gene_id)) * 100)[1]), digits=1)` %** of genes contained a single expressed isoform, and the largest number of transcripts associated with a single gene is **`r max(table(salmonCounts$gene_id))` ** transcripts.
+
+<!-- {r geneTranscriptCount, echo=FALSE}
+plotData(dmDSdata(counts=salmonCounts, samples = coldata))
+
+*Frequency plot showing the number of transcripts assigned to genes across the sampled cDNA sequence collection*
+-->
+
+Transcript count data was filtered using **`DRIMSeq`** (@R-DRIMSeq), according to filtering parameters defined in **`config.yaml`**.
+
+```{r, echo=FALSE, warning=FALSE}
+dmDSdataObj  <- dmDSdata(counts=salmonCounts, samples=coldata)
+trs_cts_unfiltered <- counts(dmDSdataObj)
+
+dmDSdataObj <- dmFilter(dmDSdataObj, min_samps_gene_expr = config$min_samps_gene_expr, 
+              min_samps_feature_expr = config$min_samps_feature_expr,
+              min_gene_expr = config$min_gene_expr, 
+              min_feature_expr = config$min_feature_expr)
+
+
+
+# Sum transcript counts into gene counts:
+trs_cts <- counts(dmDSdataObj)
+names(trs_cts)[2]<-"transcript_id"  # changed from featureID
+
+gene_cts <- trs_cts_unfiltered %>% dplyr::select(c(1, 3:ncol(trs_cts)))  %>% group_by(gene_id) %>% summarise_all(list(sum)) %>% data.frame()
+
+xlsExpressedGeneCounts <- file.path(resultDir, "FilteredExpressedGeneCounts.xlsx")
+write_xlsx(gene_cts, path = xlsExpressedGeneCounts)
+
+rownames(gene_cts) <- gene_cts$gene_id
+gene_cts$gene_id <- NULL
+keep = filterByExpr(gene_cts, design = design, min.prop = 0.5, min.count = 1, min.total.count = 15)
+gene_cts <- gene_cts[keep,]
+# write out these feature level (isoform) and gene count data to Excel files
+
+
+xlsExpressedFeatureCounts <- file.path(resultDir, "FilteredExpressedFeatureCounts.xlsx")
+write_xlsx(trs_cts, path = xlsExpressedFeatureCounts)
+
+```
+
+Filtered gene counts and gene isoform counts have been written to the files indicated below
+
+~~~
+`r xlsExpressedGeneCounts`
+`r xlsExpressedFeatureCounts`
+~~~
+
+# Differential gene expression analysis
+
+Statistical analysis performed using **`edgeR`** (@R-edgeR2010, @R-edgeR2012) on filtered gene counts, using the `TMM` method for normalisation, and correcting for false discovery rate (*FDR*) using the method of Benjamini & Hochberg (@BH1995).
+
+
+```{r, echo=FALSE, results='hide', warning=FALSE, error=FALSE}
+# Building model matrix - ensuring that the config.yaml specified reference is key in specified factor ...
+
+
+Group <- factor(studyDesign$group, 
+                levels=append(config$referenceGroup,
+                              levels(studyDesign$group)[which(levels(studyDesign$group)!=config$referenceGroup)]))
+
+design <- model.matrix(~Group)
+# Differential gene expression using edgeR:
+
+y <- DGEList(gene_cts)
+y <- calcNormFactors(y)
+y <- estimateDisp(y,design)
+fit <- glmQLFit(y,design)
+norm_counts <- cpm(y) # to plot against
+
+numberofgroups <- length(unique(studyDesign$group))
+if(numberofgroups == 2){(qlf <<- glmQLFTest(fit))
+}else{
+    (qlf <<- glmQLFTest(fit, coef =2:numberofgroups))}
+
+edger_res <- topTags(qlf, n=nrow(y), sort.by="PValue")[[1]]
+
+xlsEdgeRDiffExpr <- file.path(resultDir, "EdgeRDiffExpression.xlsx")
+write_xlsx(as.data.frame(edger_res), path = xlsEdgeRDiffExpr)
+
+myCPM <- cpm(gene_cts)
+
+
+xlsNormCounts <- file.path(resultDir, "NormCPM.xlsx")
+write_xlsx(as.data.frame(myCPM), path = xlsNormCounts)
+```
+
+The results of the differential expression analysis have been written to:
+
+~~~
+`r xlsEdgeRDiffExpr`
+~~~
+
+```{r diffExprGeneTable, echo=FALSE}
+knitr::kable(edger_res[1:15,], digits = c(2,2,2,45,45), booktabs=TRUE, table.envir='table*', linesep="")  %>%
+  kable_styling(latex_options=c("hold_position"), font_size=9)
+```
+*Table showing the top 15 genes, ranked by adjusted p-value, from the edgeR analysis. 
+**`logFC`** = log2 fold change between experimental conditions.
+**`logCPM`** = log2-scaled counts per million measure of abundance.*
+
+```{r quick calcs, echo=FALSE}
+NumUpReg <- edger_res %>% 
+  filter(edger_res[,1:(numberofgroups-1)]>config$lfcThreshold,
+         PValue<config$adjPValueThreshold)
+NEGlfcThreshold <- config$lfcThreshold
+NEGlfcThreshold[sapply(NEGlfcThreshold, is.numeric)] <- NEGlfcThreshold[sapply(NEGlfcThreshold, is.numeric)] * -1
+NumDownReg <- edger_res %>% 
+  filter(edger_res[,1:(numberofgroups-1)]<NEGlfcThreshold,
+         PValue<config$adjPValueThreshold)
+
+NumUpRegFDR <- edger_res %>% 
+  filter(edger_res[,1:(numberofgroups-1)]>config$lfcThreshold,
+         FDR<config$fdrThreshold)
+NumDownRegFDR <- edger_res %>% 
+  filter(edger_res[,1:(numberofgroups-1)]<NEGlfcThreshold,
+         FDR<config$fdrThreshold)
+```
+**`r nrow(NumUpReg) + nrow(NumDownReg)`** genes were differentially expressed, with a log2 fold change threshold of *`r config$lfcThreshold`* and P-value threshold of *`r config$adjPValueThreshold`*. **`r nrow(NumUpReg)`** genes had increased expression, and **`r nrow(NumDownReg)`** genes had reduced expression.
+
+
+**`r nrow(NumUpRegFDR) + nrow(NumDownRegFDR)`** genes were differentially expressed, with a log2 fold change threshold of *`r config$lfcThreshold`* and FDR threshold of *`r config$fdrThreshold`*. **`r nrow(NumUpRegFDR)`** genes had increased expression, and **`r nrow(NumDownRegFDR)`** genes had reduced expression.
+
+```{r geneOfInterest, echo=FALSE, comment=NA} 
+# Filter up/down regulated genes
+UpReg <- row.names(NumUpReg[1:20,])
+UpRegGenes <- as.data.frame(norm_counts[which(row.names(norm_counts)%in%UpReg),], order = row.names(NumUpReg[1:20,]))
+DownReg <- row.names(NumDownReg[1:20,])
+DownRegGenes <- as.data.frame(norm_counts[which(row.names(norm_counts)%in%DownReg),], order = row.names(NumDownReg[1:20,]))
+
+# bind and transpose and rownames
+UpDownGenes <- rbind(DownRegGenes, UpRegGenes)
+UpDownGenes <- t(UpDownGenes)
+rownames(UpDownGenes) <- as.character(studyDesign$samples)
+UpDownGenes <- as.data.frame(UpDownGenes)
+
+# add sample and group ids to melt data
+UpDownGenes$sample <- as.character(row.names(UpDownGenes))
+row.names(UpDownGenes) <- NULL
+UpDownGenes$group <- studyDesign$group
+UDGmelt <- melt(UpDownGenes, id.vars=c("sample", "group"), variable.name="gene")
+
+# Plot
+UpDownPlot <- 
+  ggplot(data = UDGmelt, aes(x=gene, y=value, fill=group)) + 
+  geom_boxplot() + 
+  ggtitle("Top Differentially Expressed Genes") + 
+  xlab("") +ylab("Norm Read Count") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, size=8))
+
+```
+
+Shown below are results from **`edgeR`** analysis: The top 20 up and 20 down differentially expressed genes are shown below.
+
+```{r Diff Exp Plot, echo=FALSE}
+
+print(UpDownPlot)
+```
+
+
+# Reproducible research
+
+This report has been created for reproducibility, using **`Rmarkdown`**, publicly available **`R`** packages, and the **`LaTeX`** document typesetting software. For clarity the **`R`** packages used, and their versions, are listed below.
+
+\fontsize{8}{12}
+
+```{r sessionInfo, eval=TRUE, echo=FALSE, comment=NA}
+options(width = 100)
+utils:::print.sessionInfo(sessionInfo()[-7], locale=FALSE)
+```
+
+
+\fontsize{10}{14}
+
+
+```{!r, engine='bash', echo=FALSE, comment=NA}
+conda list "porechop|filtlong|salmon|samtools|minimap2|openjdk|rstudio"
+```
+
+The session data produced in the production of this report, which can be used for further analysis of the dataset, can be found here:
+
+~~~
+`r persistenceData`
+~~~
+
+```{r, echo=FALSE, include=FALSE, warning="hide"}
+save.session(persistenceData)
+```
+
+
+\pagebreak
+
+
+# References and citations
+
+Unfortunately due to package changes that's caused an issue with my code, this section is not working right now.
+If you need the citations, then please open the file `Static/Bibliography.bib` with a text editor.
