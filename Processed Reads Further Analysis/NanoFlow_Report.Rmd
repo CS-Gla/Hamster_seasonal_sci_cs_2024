@@ -51,7 +51,7 @@ library(writexl)
 library(digest)
 library(kableExtra)
 library(stageR)
-library(ShortRead)  # Oh, the irony!
+library(ShortRead)
 
 config <- yaml.load_file("config.yaml")
 
