@@ -39,3 +39,8 @@ To run software;
 3.	Run the NanoFLow_report.Rmd script in rstudio, within the same directory as the nanoflow scirpts. – expected output is an analysis folder containing expression matrices.
 4.	Expression matrices may be used in further analysis (Biodare)
 
+
+Expected run times are:
+•	Demo: < 1hr
+•	Full data set: Approx. 24hrs
+
