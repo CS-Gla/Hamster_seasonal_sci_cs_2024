@@ -22,11 +22,13 @@ o	Build cDNA_DE environment (conda env create -f cDNA_DE.yml)
 •	Install Rstudio
 
 Requirements; Guppy basecaller (https://community.nanoporetech.com/docs/prepare/library_prep_protocols/Guppy-protocol/v/gpb_2003_v1_revax_14dec2018/linux-guppy) (v.4.2.1)
-Porechop (https://github.com/rrwick/Porechop) (v0.2.4)
-Filtlong (https://github.com/rrwick/Filtlong) (v0.2.0)
-Minimap2 (https://github.com/lh3/minimap2) (v2.19)
-Salmon (https://github.com/COMBINE-lab/salmon) (v0.14.2)
-EdgeR (https://bioconductor.org/packages/release/bioc/html/edgeR.html) (v3.24.3)
+Guppy basecaller (https://community.nanoporetech.com/docs/prepare/library_prep_protocols/Guppy-protocol/v/gpb_2003_v1_revax_14dec2018/linux-guppy) (v.4.2.1) <br>
+Porechop (https://github.com/rrwick/Porechop) (v0.2.4)<br>
+Filtlong (https://github.com/rrwick/Filtlong) (v0.2.0)<br>
+Minimap2 (https://github.com/lh3/minimap2) (v2.19)<br>
+Salmon (https://github.com/COMBINE-lab/salmon) (v0.14.2)<br>
+EdgeR (https://bioconductor.org/packages/release/bioc/html/edgeR.html) (v3.24.3)<br>
+
 
 Installation time estimated at under 15 minutes on a standard desktop.
 
