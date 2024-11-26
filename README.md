@@ -16,9 +16,9 @@ glmm.r: Used to build a gneral linear modle of Siberian hamster CRISPR data.
 
 
 Requirements;
-Guppy basecaller (https://community.nanoporetech.com/docs/prepare/library_prep_protocols/Guppy-protocol/v/gpb_2003_v1_revax_14dec2018/linux-guppy) <br>
-Porechop (https://github.com/rrwick/Porechop) <br>
-Filtlong (https://github.com/rrwick/Filtlong) <br>
-Minimap2 (https://github.com/lh3/minimap2) <br>
-Salmon (https://github.com/COMBINE-lab/salmon) <br>
-EdgeR (https://bioconductor.org/packages/release/bioc/html/edgeR.html) <br>
+Guppy basecaller (https://community.nanoporetech.com/docs/prepare/library_prep_protocols/Guppy-protocol/v/gpb_2003_v1_revax_14dec2018/linux-guppy) (v.4.2.1) <br>
+Porechop (https://github.com/rrwick/Porechop) (v0.2.4)<br>
+Filtlong (https://github.com/rrwick/Filtlong) (v0.2.0)<br>
+Minimap2 (https://github.com/lh3/minimap2) (v2.19)<br>
+Salmon (https://github.com/COMBINE-lab/salmon) (v0.14.2)<br>
+EdgeR (https://bioconductor.org/packages/release/bioc/html/edgeR.html) (v3.24.3)<br>
